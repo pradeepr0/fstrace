@@ -68,10 +68,10 @@ static void* introfs_init(struct fuse_conn_info* conn) noexcept {
 static void introfs_destroy(void* pdata) noexcept {
   try {
     IntrofsState* pstate = static_cast<IntrofsState*>(pdata);
-    for(const auto& path : pstate->ifiles) {
+    for (const auto& path : pstate->ifiles) {
       log_printf("R\t%s\n", path.c_str());
     }
-    for(const auto& path : pstate->ofiles) {
+    for (const auto& path : pstate->ofiles) {
       log_printf("W\t%s\n", path.c_str());
     }
   } catch (...) {
