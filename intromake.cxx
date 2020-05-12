@@ -45,19 +45,6 @@ public:
   ProcessTree pstree;
 };
 
-static int log_pid() noexcept {
-  struct fuse_context* context = fuse_get_context();
-  IntrofsState* state = static_cast<IntrofsState*>(context->private_data);
-  FILE* logfp = state->logfp;
-
-  if (logfp == NULL) return 0;
-
-  const pid_t pid = context->pid;
-  const pid_t ppid = state->pstree.ppidof(pid);
-
-  return fprintf(logfp, "%d %d ", pid, ppid);
-}
-
 static int log_printf(const char* format, ...) noexcept {
   struct fuse_context* context = fuse_get_context();
   IntrofsState* state = static_cast<IntrofsState*>(context->private_data);
