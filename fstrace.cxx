@@ -448,52 +448,46 @@ static struct _introfs_operations : public fuse_operations {
 
 } introfs_oper;
 
-/*
- * `intromake` works by using FUSE (filesystem in user space) to setup a new
- * filesystem that mirrors the filesystem rooted under the / directory.
- * The new filesystem serves content from the original filesystem while
- * keeping track of file opens and creates.
- *
- * When `intromake` is invoked inside a directory `dir`, it first sets up the
- * mirroring-introspecting filesystem and then proceeds to spawn a `make`
- * inside the mirrored copy of `dir`. This allows intromake to monitor the
- * file operations performed by `make` and its subprocesses.
- *
- * In particular, `intromake` introspects file creates and accesses. During a
- * build, if a file `E` was created by opening and processing files
- * `F_1`, `F_2`, ..., `F_n`, then it is reasonable to assume that `E` depends
- * on `F_{1 to N}`. Thus, the introspection information stored by `intromake`
- * enables automatic dependency extraction.
- *
- * `intromake` then waits for the spawned `make` to complete and then sets up
- * a lazy unmount of the mirroring filesystem with an invocation of
- * `fusermount -uz`
- *
- * Implementation detail:
- * ----------------------
- *
- * The sequence of filesystem setup, make invocation and filesystem unmount
- * could possibly have been written as a shell script. However, we need
- * some fine grained synchronization that is best achieved in code with some
- * system calls. This synchronization is described next.
- *
- * After `make` is spawned, it needs to pause till the FUSE filesystem is
- * setup by the parent `intromake` process. Otherwise it will begin building
- * inside a non-existent directory tree. In code, this is achieved by making
- * the spawned `make` process pause util a signal is sent. The parent
- * `intromake` process sends this signal on filesystem init.
- */
+//
+// `fstrace` works by using FUSE (filesystem in user space) to setup a new
+// filesystem that mirrors the filesystem rooted under the / directory. The new
+// filesystem serves content from the original filesystem while keeping track of
+// file opens and creates.
+//
+// When `fstrace` is invoked inside a directory `dir`, it first sets up the
+// mirroring-introspecting filesystem and then proceeds to spawn a delegate-tool
+// chrooted inside the mirrored copy of `dir`. This allows fstrace to monitor
+// the file operations performed by delegate-tool and its subprocesses.
+//
+// `fstrace` then waits for the spawned delegate-tool to complete and then sets up
+// a lazy unmount of the mirroring filesystem with an invocation of
+// `fusermount -uz`
+//
+// Implementation detail:
+// ----------------------
+//
+// The sequence of filesystem setup, make invocation and filesystem unmount
+// could possibly have been written as a shell script. However, we need some
+// fine grained synchronization that is best achieved in code with some system
+// calls. This synchronization is described next.
+//
+// After delegate-tool is spawned, it needs to pause till the FUSE filesystem is
+// setup by the parent `fstrace` process. Otherwise it will begin building
+// inside a non-existent directory tree. In code, this is achieved by making the
+// spawned delegate-tool process pause util a signal is sent. The parent
+// `fstrace` process sends this signal on filesystem init.
+//
 
-/*
- * intromake configuration. Might load this from a config file in the future.
- */
+// fstrace configuration.
+// TODO: Maybe load this from a config file in the future.
 static struct Configuration {
-  char const* mount_point;
-  char const* log_filename;
-  char const* tool_name;
+  const char* mount_point;
+  const char* log_filepath;
 
-  Configuration()
-      : mount_point("/tmp/__introfs__"), log_filename("/tmp/__introfs__.log"), tool_name("make") {}
+  Configuration(
+      const char* mount_point_ = "/tmp/__introfs__",
+      const char* log_filepath_ = "/tmp/__introfs__.log")
+      : mount_point(mount_point_), log_filepath(log_filepath_) {}
 
   std::string get_mirrored_path(const std::string& path) const {
     return std::string(mount_point) + "/" + path;
@@ -512,10 +506,10 @@ void* fuse_ops_thread_func(void* pstate) {
   return nullptr;
 }
 
-void intromake_main(const pid_t& child_pid) {
-  ensure_mount_point("/tmp/__introfs__");
+void setup_fs_and_wait_for_child(const pid_t& child_pid) {
+  ensure_mount_point(config.mount_point);
 
-  IntrofsState state(child_pid, config.log_filename);
+  IntrofsState state(child_pid, config.log_filepath);
 
   //
   // spawn a thread to handle FUSE events
@@ -525,7 +519,7 @@ void intromake_main(const pid_t& child_pid) {
   if (err != 0) throw SystemException("pthread_create failed", err);
 
   //
-  // Meanwhile wait for the spawned `make` process to complete
+  // Meanwhile wait for the spawned delegate-tool process to complete
   //
   while (true) {
     int wstatus;
@@ -545,7 +539,7 @@ void intromake_main(const pid_t& child_pid) {
   //
   // Lazy unmount the introfs filesystem
   //
-  system("fusermount -uz /tmp/__introfs__");
+  system((std::string("fusermount -uz ") + config.mount_point).c_str());
 }
 
 /*
@@ -553,9 +547,9 @@ void intromake_main(const pid_t& child_pid) {
  */
 void on_user_signal1(int) { return; }
 
-void spawned_make_main(int argc0, char* argv0[]) {
+void spawn_delegate_tool(const char* tool_name, char* tool_argv[]) {
   //
-  // Prepare to be woken up by the `intromake` parent process
+  // Prepare to be woken up by the `fstrace` parent process
   // and then pause for a signal
   //
   signal(SIGUSR2, on_user_signal1);
@@ -571,25 +565,32 @@ void spawned_make_main(int argc0, char* argv0[]) {
   chroot(config.mount_point);
 
   //
-  // Prepare arg vector for the make process
+  // spawn sub process
   //
-  char* child_args[argc0 + 1];
-  memcpy(child_args, argv0, sizeof(char*) * argc0);
-  child_args[0] = const_cast<char*>(config.tool_name);
-  child_args[argc0] = nullptr;
-
-  if (execvp(config.tool_name, child_args) == -1)
-    throw SystemException("Failed to spawn make", errno);
+  if (execvp(tool_name, tool_argv) == -1) {
+    throw SystemException("Failed to spawn sub process", errno);
+  }
 }
 
+//
+// This tool should be invoked as:
+// ```sh
+//  fstrace <cmd> [args...]
+// ```
+//
 int main(int argc, char* argv[]) {
-  umask(0);
+  if (argc < 2) {
+    fprintf(stderr, "USAGE: %s <cmd> [<args>...]\n", argv[0]);
+    return -1;
+  }
+
+  umask(0);  // TODO: Do we need this?
 
   const pid_t child_pid = fork();
   if (child_pid > 0) {
-    intromake_main(child_pid);
+    setup_fs_and_wait_for_child(child_pid);
   } else if (child_pid == 0) /* this is the child */ {
-    spawned_make_main(argc, argv);
+    spawn_delegate_tool(argv[1], argv + 1);
   } else {
     throw SystemException("fork() failed", errno);
   }

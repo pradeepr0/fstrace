@@ -1,12 +1,22 @@
-intromake
-=========
+fstrace
+========
 
-An introspecting `make` that records I/O activity
+An tools `make` that file access activity
 
-`intromake` sets up a `FUSE` (Filesystem in user space) mirror of the
-directory it is invoked in. It then spawns a make in the mirrored `FUSE`
-filesystem. The `FUSE` layer allows intercepting file accesses. This
-inturn allows us to examine what files were required to compile a project.
+`fstrace` sets up a FUSE (Filesystem in user space) mirror of the directory it
+is invoked in. It then spawns the specified command chroot-ed in the mirrored
+FUSE filesystem. The FUSE layer allows intercepting file accesses. This
+in turn allows us to examine what files were read / written by the command.
 
-Overall `intromake` is useful for extracting header file dependencies,
-source generator tool dependencies etc.
+The intercepted file accesses are written out to `/tmp/__introfs__.log`
+
+Usage
+-----
+```sh
+fstrace <cmd> [<args>...]
+```
+
+Example:
+```sh
+fstrace gcc utility.c
+```
