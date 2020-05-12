@@ -26,7 +26,6 @@ extern "C" {
 }
 
 #include "ProcIORecorder.hxx"
-#include "ProcessTree.hxx"
 #include "sysutil.hxx"
 
 class IntrofsState {
@@ -42,7 +41,6 @@ public:
   const pid_t tool_pid;
   FILE* logfp;
   ProcIORecorder pio;
-  ProcessTree pstree;
 };
 
 static int log_printf(const char* format, ...) noexcept {
