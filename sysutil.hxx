@@ -37,8 +37,9 @@ void change_dir(const std::string& path) {
 }
 
 void ensure_mount_point(const char* mount_point) {
-  if (mkdir(mount_point, 0777) == -1)
+  if (mkdir(mount_point, 0777) == -1) {
     if (errno != EEXIST) throw SystemException("Invalid mount point", errno);
+  }
 }
 
 FILE* open_file(const char* filename, const char* mode) {

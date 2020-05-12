@@ -20,26 +20,26 @@
 #include <sys/wait.h>
 #include <sys/xattr.h>
 #include <unistd.h>
+#include <set>
+#include <string>
 
 extern "C" {
 #include <ulockmgr.h>
 }
 
-#include "ProcIORecorder.hxx"
 #include "sysutil.hxx"
 
 class IntrofsState {
 public:
-  IntrofsState(pid_t _tool_pid, const char* logfilename)
-      : tool_pid(_tool_pid), logfp(open_file(logfilename, "w")) {}
+  IntrofsState(pid_t delegate_pid_, const char* logfilename)
+      : delegate_pid(delegate_pid_), logfp(open_file(logfilename, "w")) {}
 
-  ~IntrofsState() {
-    fclose(logfp);
-  }
+  ~IntrofsState() { fclose(logfp); }
 
-  const pid_t tool_pid;
+  const pid_t delegate_pid;
   FILE* logfp;
-  ProcIORecorder pio;
+  std::set<std::string> ifiles;
+  std::set<std::string> ofiles;
 };
 
 static int log_printf(const char* format, ...) noexcept {
@@ -61,36 +61,19 @@ static int log_printf(const char* format, ...) noexcept {
 
 static void* introfs_init(struct fuse_conn_info* conn) noexcept {
   IntrofsState* pstate = static_cast<IntrofsState*>(fuse_get_context()->private_data);
-  sigqueue(pstate->tool_pid, SIGUSR2, sigval());
+  sigqueue(pstate->delegate_pid, SIGUSR2, sigval());
   return pstate;
 }
 
 static void introfs_destroy(void* pdata) noexcept {
   try {
     IntrofsState* pstate = static_cast<IntrofsState*>(pdata);
-
-    //
-    // Dump out file-ids
-    //
-    const FilenameInternTable& ftable = pstate->pio.get_filename_table();
-    typedef FilenameInternTable::id_type id_type;
-    for (id_type id = 0; id < ftable.size(); ++id)
-      log_printf("%d %s\n", id, ftable.name(id).c_str());
-
-    //
-    // Dump out dependency information
-    //
-    ProcIORecorder::dependency_map_type depmap;
-    pstate->pio.populate_dependency_map(depmap);
-
-    id_type last_id = -1;
-    for (auto const& d : depmap) {
-      if (d.first != last_id) log_printf("\n%d:", d.first);
-
-      log_printf(" %d", d.second);
-      last_id = d.first;
+    for(const auto& path : pstate->ifiles) {
+      log_printf("R\t%s\n", path.c_str());
     }
-
+    for(const auto& path : pstate->ofiles) {
+      log_printf("W\t%s\n", path.c_str());
+    }
   } catch (...) {
   }
 }
@@ -296,9 +279,7 @@ static int introfs_create(const char* path, mode_t mode, struct fuse_file_info* 
   try {
     auto* context = fuse_get_context();
     auto* pstate = static_cast<IntrofsState*>(context->private_data);
-
-    pstate->pio.record_process_output(context->pid, path);
-
+    pstate->ofiles.emplace(path);
   } catch (...) {
     return -1;
   }
@@ -316,9 +297,9 @@ static int introfs_open(const char* path, struct fuse_file_info* fi) noexcept {
     auto* pstate = static_cast<IntrofsState*>(context->private_data);
 
     if (fi->flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC)) {
-      pstate->pio.record_process_output(context->pid, path);
+      pstate->ofiles.emplace(path);
     } else {
-      pstate->pio.record_process_input(context->pid, path);
+      pstate->ifiles.emplace(path);
     }
 
   } catch (...) {
