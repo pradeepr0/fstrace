@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <stdexcept>
+#include <string>
 
 template <class T, std::size_t N>
 constexpr std::size_t array_size(const T (&array)[N]) noexcept {
@@ -38,6 +39,13 @@ void change_dir(const std::string& path) {
 void ensure_mount_point(const char* mount_point) {
   if (mkdir(mount_point, 0777) == -1)
     if (errno != EEXIST) throw SystemException("Invalid mount point", errno);
+}
+
+FILE* open_file(const char* filename, const char* mode) {
+  FILE* fp = fopen(filename, mode);
+  auto message = std::string("Cannot open file: ") + filename;
+  if (fp == nullptr) throw SystemException(message.c_str(), errno);
+  return fp;
 }
 
 #endif  // include guard

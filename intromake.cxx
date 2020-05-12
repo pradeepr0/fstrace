@@ -30,12 +30,11 @@ extern "C" {
 
 class IntrofsState {
 public:
-  IntrofsState(pid_t _tool_pid, const char* logfilename) : tool_pid(_tool_pid) {
-    logfp = fopen(logfilename, "w");
-  }
+  IntrofsState(pid_t _tool_pid, const char* logfilename)
+      : tool_pid(_tool_pid), logfp(open_file(logfilename, "w")) {}
 
   ~IntrofsState() {
-    if (this->logfp != NULL) fclose(logfp);
+    fclose(logfp);
   }
 
   const pid_t tool_pid;
@@ -47,8 +46,6 @@ static int log_printf(const char* format, ...) noexcept {
   struct fuse_context* context = fuse_get_context();
   IntrofsState* state = static_cast<IntrofsState*>(context->private_data);
   FILE* logfp = state->logfp;
-
-  if (logfp == NULL) return 0;
 
   va_list args;
   va_start(args, format);
@@ -139,7 +136,7 @@ static int introfs_readlink(const char* path, char* buf, size_t size) {
 
 static int introfs_opendir(const char* path, struct fuse_file_info* fi) {
   DIR* dp = opendir(path);
-  if (dp == NULL) return -errno;
+  if (dp == nullptr) return -errno;
 
   fi->fh = (unsigned long)dp;
   return 0;
@@ -152,7 +149,7 @@ static int introfs_readdir(
 
   (void)path;
   seekdir(dp, offset);
-  while ((de = readdir(dp)) != NULL) {
+  while ((de = readdir(dp)) != nullptr) {
     struct stat st = {};
     st.st_ino = de->d_ino;
     st.st_mode = de->d_type << 12;
@@ -531,7 +528,7 @@ void* fuse_ops_thread_func(void* pstate) {
   };
 
   fuse_main(array_size(args), args, &introfs_oper, pstate);
-  return NULL;
+  return nullptr;
 }
 
 void intromake_main(const pid_t& child_pid) {
@@ -543,7 +540,7 @@ void intromake_main(const pid_t& child_pid) {
   // spawn a thread to handle FUSE events
   //
   pthread_t fuse_ops_thread;
-  int err = pthread_create(&fuse_ops_thread, NULL, fuse_ops_thread_func, &state);
+  int err = pthread_create(&fuse_ops_thread, nullptr, fuse_ops_thread_func, &state);
   if (err != 0) throw SystemException("pthread_create failed", err);
 
   //
@@ -598,7 +595,7 @@ void spawned_make_main(int argc0, char* argv0[]) {
   char* child_args[argc0 + 1];
   memcpy(child_args, argv0, sizeof(char*) * argc0);
   child_args[0] = const_cast<char*>(config.tool_name);
-  child_args[argc0] = NULL;
+  child_args[argc0] = nullptr;
 
   if (execvp(config.tool_name, child_args) == -1)
     throw SystemException("Failed to spawn make", errno);
