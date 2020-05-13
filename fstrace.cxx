@@ -31,13 +31,17 @@ extern "C" {
 
 class IntrofsState {
 public:
-  IntrofsState(pid_t delegate_pid_, const char* logfilename)
-      : delegate_pid(delegate_pid_), logfp(open_file(logfilename, "w")) {}
+  IntrofsState(pid_t delegate_pid_, const char* logfilename, const char* mount_point_)
+      : delegate_pid(delegate_pid_),
+        logfp(open_file(logfilename, "w")),
+        mount_point(mount_point_) {}
 
   ~IntrofsState() { fclose(logfp); }
 
   const pid_t delegate_pid;
   FILE* logfp;
+  const std::string mount_point;
+  std::set<std::string> links;
   std::set<std::string> ifiles;
   std::set<std::string> ofiles;
 };
@@ -68,6 +72,9 @@ static void* introfs_init(struct fuse_conn_info* conn) noexcept {
 static void introfs_destroy(void* pdata) noexcept {
   try {
     IntrofsState* pstate = static_cast<IntrofsState*>(pdata);
+    for (const auto& path : pstate->links) {
+      log_printf("L\t%s\n", path.c_str());
+    }
     for (const auto& path : pstate->ifiles) {
       log_printf("R\t%s\n", path.c_str());
     }
@@ -110,10 +117,29 @@ static int introfs_access(const char* path, int mask) {
 static int introfs_readlink(const char* path, char* buf, size_t size) {
   int res;
 
+  auto* context = fuse_get_context();
+  auto* pstate = static_cast<IntrofsState*>(context->private_data);
+
+  pstate->links.insert(path);
   res = readlink(path, buf, size - 1);
   if (res == -1) return -errno;
 
-  buf[res] = '\0';
+
+  std::string redirected;
+  if (buf[0] == '/') {  // absolute link
+    redirected = pstate->mount_point + std::string(buf, res);
+  } else {  // relative link
+    const auto& dirname = [](const std::string& path) { return path.substr(0, path.rfind('/')); };
+    redirected = pstate->mount_point + dirname(path).c_str() + "/" + std::string(buf, res);
+  }
+
+  if (size < (redirected.size() + 1)) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  memcpy(buf, redirected.c_str(), redirected.size());
+  buf[redirected.size()] = '\0';
+
   return 0;
 }
 
@@ -509,7 +535,7 @@ void* fuse_ops_thread_func(void* pstate) {
 void setup_fs_and_wait_for_child(const pid_t& child_pid) {
   ensure_mount_point(config.mount_point);
 
-  IntrofsState state(child_pid, config.log_filepath);
+  IntrofsState state(child_pid, config.log_filepath, config.mount_point);
 
   //
   // spawn a thread to handle FUSE events
@@ -562,7 +588,11 @@ void spawn_delegate_tool(const char* tool_name, char* tool_argv[]) {
   const auto& curdir = get_current_dir();
   change_dir(config.get_mirrored_path(curdir));
 
-  chroot(config.mount_point);
+  // Cannot chroot!
+  // if (chroot(config.mount_point)) {
+  //   perror("chroot failed!");
+  //   throw SystemException("chroot failed", errno);
+  // }
 
   //
   // spawn sub process
