@@ -25,24 +25,24 @@ private:
   const int errno_;
 };
 
-std::string get_current_dir() {
+std::string getCurrentDir() {
   char name[4096] = {};
   if (getcwd(name, sizeof(name)) == NULL) throw SystemException("getcwd failed", errno);
 
   return std::string(name);
 }
 
-void change_dir(const std::string& path) {
+void changeDir(const std::string& path) {
   if (chdir(path.c_str()) != 0) throw SystemException("chdir failed", errno);
 }
 
-void ensure_mount_point(const char* mount_point) {
+void ensureMountPoint(const char* mount_point) {
   if (mkdir(mount_point, 0777) == -1) {
     if (errno != EEXIST) throw SystemException("Invalid mount point", errno);
   }
 }
 
-FILE* open_file(const char* filename, const char* mode) {
+FILE* openFile(const char* filename, const char* mode) {
   FILE* fp = fopen(filename, mode);
   auto message = std::string("Cannot open file: ") + filename;
   if (fp == nullptr) throw SystemException(message.c_str(), errno);

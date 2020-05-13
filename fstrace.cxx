@@ -32,9 +32,7 @@ extern "C" {
 class IntrofsState {
 public:
   IntrofsState(pid_t delegate_pid_, const char* logfilename, const char* mount_point_)
-      : delegate_pid(delegate_pid_),
-        logfp(open_file(logfilename, "w")),
-        mount_point(mount_point_) {}
+      : delegate_pid(delegate_pid_), logfp(openFile(logfilename, "w")), mount_point(mount_point_) {}
 
   ~IntrofsState() { fclose(logfp); }
 
@@ -46,91 +44,80 @@ public:
   std::set<std::string> ofiles;
 };
 
-static int log_printf(const char* format, ...) noexcept {
-  struct fuse_context* context = fuse_get_context();
-  IntrofsState* state = static_cast<IntrofsState*>(context->private_data);
-  FILE* logfp = state->logfp;
+using FuseContext = struct fuse_context;
 
+static IntrofsState* getFuseContextData() {
+  FuseContext* context = fuse_get_context();
+  if (context == nullptr) {
+    fprintf(stderr, "NULL fuse context!");
+    exit(-1);
+  }
+  return static_cast<IntrofsState*>(fuse_get_context()->private_data);
+}
+
+static int logPrintf(const char* format, ...) noexcept {
   va_list args;
   va_start(args, format);
-  int n = vfprintf(logfp, format, args);
+  int n = vfprintf(getFuseContextData()->logfp, format, args);
   va_end(args);
-
   return n;
 }
+
+#define RETURN_ON_ERROR(x)        \
+  do {                            \
+    if ((x) == -1) return -errno; \
+  } while (0)
 
 //
 // FUSE delegate definitions
 //
 
-static void* introfs_init(struct fuse_conn_info* conn) noexcept {
-  IntrofsState* pstate = static_cast<IntrofsState*>(fuse_get_context()->private_data);
-  sigqueue(pstate->delegate_pid, SIGUSR2, sigval());
-  return pstate;
+namespace introfs {
+
+static void* init(struct fuse_conn_info* conn) noexcept {
+  IntrofsState* state = getFuseContextData();
+  sigqueue(state->delegate_pid, SIGUSR2, sigval());
+  return state;
 }
 
-static void introfs_destroy(void* pdata) noexcept {
+static void destroy(void* pdata) noexcept {
   try {
-    IntrofsState* pstate = static_cast<IntrofsState*>(pdata);
-    for (const auto& path : pstate->links) {
-      log_printf("L\t%s\n", path.c_str());
-    }
-    for (const auto& path : pstate->ifiles) {
-      log_printf("R\t%s\n", path.c_str());
-    }
-    for (const auto& path : pstate->ofiles) {
-      log_printf("W\t%s\n", path.c_str());
-    }
+    IntrofsState* state = getFuseContextData();
+    for (const auto& path : state->links) logPrintf("L\t%s\n", path.c_str());
+    for (const auto& path : state->ifiles) logPrintf("R\t%s\n", path.c_str());
+    for (const auto& path : state->ofiles) logPrintf("W\t%s\n", path.c_str());
   } catch (...) {
   }
 }
 
-static int introfs_getattr(const char* path, struct stat* stbuf) {
-  int res;
-
-  res = lstat(path, stbuf);
-  if (res == -1) return -errno;
-
+static int getattr(const char* path, struct stat* stbuf) {
+  RETURN_ON_ERROR(::lstat(path, stbuf));
   return 0;
 }
 
-static int introfs_fgetattr(const char* path, struct stat* stbuf, struct fuse_file_info* fi) {
-  int res;
-
-  (void)path;
-
-  res = fstat(fi->fh, stbuf);
-  if (res == -1) return -errno;
-
+static int fgetattr(const char* /*path*/, struct stat* stbuf, struct fuse_file_info* fi) {
+  RETURN_ON_ERROR(::fstat(fi->fh, stbuf));
   return 0;
 }
 
-static int introfs_access(const char* path, int mask) {
-  int res;
-
-  res = access(path, mask);
-  if (res == -1) return -errno;
-
+static int access(const char* path, int mask) {
+  RETURN_ON_ERROR(::access(path, mask));
   return 0;
 }
 
-static int introfs_readlink(const char* path, char* buf, size_t size) {
-  int res;
+static int readlink(const char* path, char* buf, size_t size) {
+  auto* state = getFuseContextData();
 
-  auto* context = fuse_get_context();
-  auto* pstate = static_cast<IntrofsState*>(context->private_data);
-
-  pstate->links.insert(path);
-  res = readlink(path, buf, size - 1);
+  state->links.insert(path);
+  int res = ::readlink(path, buf, size - 1);
   if (res == -1) return -errno;
-
 
   std::string redirected;
   if (buf[0] == '/') {  // absolute link
-    redirected = pstate->mount_point + std::string(buf, res);
+    redirected = state->mount_point + std::string(buf, res);
   } else {  // relative link
     const auto& dirname = [](const std::string& path) { return path.substr(0, path.rfind('/')); };
-    redirected = pstate->mount_point + dirname(path).c_str() + "/" + std::string(buf, res);
+    redirected = state->mount_point + dirname(path).c_str() + "/" + std::string(buf, res);
   }
 
   if (size < (redirected.size() + 1)) {
@@ -143,169 +130,113 @@ static int introfs_readlink(const char* path, char* buf, size_t size) {
   return 0;
 }
 
-static int introfs_opendir(const char* path, struct fuse_file_info* fi) {
-  DIR* dp = opendir(path);
+static int opendir(const char* path, struct fuse_file_info* fi) {
+  DIR* dp = ::opendir(path);
   if (dp == nullptr) return -errno;
 
-  fi->fh = (unsigned long)dp;
+  fi->fh = reinterpret_cast<unsigned long>(dp);
   return 0;
 }
 
-static int introfs_readdir(
-    const char* path, void* buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info* fi) {
-  DIR* dp = (DIR*)fi->fh;
-  struct dirent* de;
+static int readdir(
+    const char* /*path*/,
+    void* buf,
+    fuse_fill_dir_t filler,
+    off_t offset,
+    struct fuse_file_info* fi) {
+  DIR* dp = reinterpret_cast<DIR*>(fi->fh);
+  ::seekdir(dp, offset);
 
-  (void)path;
-  seekdir(dp, offset);
-  while ((de = readdir(dp)) != nullptr) {
+  struct dirent* de;
+  while ((de = ::readdir(dp)) != nullptr) {
     struct stat st = {};
     st.st_ino = de->d_ino;
     st.st_mode = de->d_type << 12;
 
-    if (filler(buf, de->d_name, &st, telldir(dp))) break;
+    if (filler(buf, de->d_name, &st, ::telldir(dp))) break;
   }
-
   return 0;
 }
 
-static int introfs_releasedir(const char* path, struct fuse_file_info* fi) {
-  DIR* dp = (DIR*)fi->fh;
-  (void)path;
-  closedir(dp);
+static int releasedir(const char* /*path*/, struct fuse_file_info* fi) {
+  ::closedir(reinterpret_cast<DIR*>(fi->fh));
   return 0;
 }
 
-static int introfs_mknod(const char* path, mode_t mode, dev_t rdev) {
-  int res;
-
-  if (S_ISFIFO(mode))
-    res = mkfifo(path, mode);
-  else
-    res = mknod(path, mode, rdev);
-
-  if (res == -1) return -errno;
-
+static int mknod(const char* path, mode_t mode, dev_t rdev) {
+  RETURN_ON_ERROR((S_ISFIFO(mode)) ? (::mkfifo(path, mode)) : (::mknod(path, mode, rdev)));
   return 0;
 }
 
-static int introfs_mkdir(const char* path, mode_t mode) {
-  int res;
-
-  res = mkdir(path, mode);
-  if (res == -1) return -errno;
-
+static int mkdir(const char* path, mode_t mode) {
+  RETURN_ON_ERROR(::mkdir(path, mode));
   return 0;
 }
 
-static int introfs_unlink(const char* path) {
-  int res;
-
-  res = unlink(path);
-  if (res == -1) return -errno;
-
+static int unlink(const char* path) {
+  RETURN_ON_ERROR(::unlink(path));
   return 0;
 }
 
-static int introfs_rmdir(const char* path) {
-  int res;
-
-  res = rmdir(path);
-  if (res == -1) return -errno;
-
+static int rmdir(const char* path) {
+  RETURN_ON_ERROR(::rmdir(path));
   return 0;
 }
 
-static int introfs_symlink(const char* from, const char* to) {
-  int res;
-
-  res = symlink(from, to);
-  if (res == -1) return -errno;
-
+static int symlink(const char* from, const char* to) {
+  RETURN_ON_ERROR(::symlink(from, to));
   return 0;
 }
 
-static int introfs_rename(const char* from, const char* to) {
-  int res;
-
-  res = rename(from, to);
-  if (res == -1) return -errno;
-
+static int rename(const char* from, const char* to) {
+  RETURN_ON_ERROR(::rename(from, to));
   return 0;
 }
 
-static int introfs_link(const char* from, const char* to) {
-  int res;
-
-  res = link(from, to);
-  if (res == -1) return -errno;
-
+static int link(const char* from, const char* to) {
+  RETURN_ON_ERROR(::link(from, to));
   return 0;
 }
 
-static int introfs_chmod(const char* path, mode_t mode) {
-  int res;
-
-  res = chmod(path, mode);
-  if (res == -1) return -errno;
-
+static int chmod(const char* path, mode_t mode) {
+  RETURN_ON_ERROR(::chmod(path, mode));
   return 0;
 }
 
-static int introfs_chown(const char* path, uid_t uid, gid_t gid) {
-  int res;
-
-  res = lchown(path, uid, gid);
-  if (res == -1) return -errno;
-
+static int chown(const char* path, uid_t uid, gid_t gid) {
+  RETURN_ON_ERROR(::lchown(path, uid, gid));
   return 0;
 }
 
-static int introfs_truncate(const char* path, off_t size) {
-  int res;
-
-  res = truncate(path, size);
-  if (res == -1) return -errno;
-
+static int truncate(const char* path, off_t size) {
+  RETURN_ON_ERROR(::truncate(path, size));
   return 0;
 }
 
-static int introfs_ftruncate(const char* path, off_t size, struct fuse_file_info* fi) {
-  int res;
-
-  (void)path;
-
-  res = ftruncate(fi->fh, size);
-  if (res == -1) return -errno;
-
+static int ftruncate(const char* /*path*/, off_t size, struct fuse_file_info* fi) {
+  RETURN_ON_ERROR(::ftruncate(fi->fh, size));
   return 0;
 }
 
-static int introfs_utimens(const char* path, const struct timespec ts[2]) {
-  int res;
-  struct timeval tv[2];
-
+static int utimens(const char* path, const struct timespec ts[2]) {
+  struct timeval tv[2] = {};
   tv[0].tv_sec = ts[0].tv_sec;
   tv[0].tv_usec = ts[0].tv_nsec / 1000;
   tv[1].tv_sec = ts[1].tv_sec;
   tv[1].tv_usec = ts[1].tv_nsec / 1000;
 
-  res = utimes(path, tv);
-  if (res == -1) return -errno;
-
+  RETURN_ON_ERROR(::utimes(path, tv));
   return 0;
 }
 
-static int introfs_create(const char* path, mode_t mode, struct fuse_file_info* fi) {
-  int fd;
-
-  fd = open(path, fi->flags, mode);
-  if (fd == -1) return -errno;
+static int create(const char* path, mode_t mode, struct fuse_file_info* fi) {
+  int fd = ::open(path, fi->flags, mode);
+  RETURN_ON_ERROR(fd);
 
   try {
     auto* context = fuse_get_context();
-    auto* pstate = static_cast<IntrofsState*>(context->private_data);
-    pstate->ofiles.emplace(path);
+    auto* state = static_cast<IntrofsState*>(context->private_data);
+    state->ofiles.emplace(path);
   } catch (...) {
     return -1;
   }
@@ -314,20 +245,17 @@ static int introfs_create(const char* path, mode_t mode, struct fuse_file_info* 
   return 0;
 }
 
-static int introfs_open(const char* path, struct fuse_file_info* fi) noexcept {
-  int fd = open(path, fi->flags);
-  if (fd == -1) return -errno;
+static int open(const char* path, struct fuse_file_info* fi) noexcept {
+  int fd = ::open(path, fi->flags);
+  RETURN_ON_ERROR(fd);
 
   try {
-    auto* context = fuse_get_context();
-    auto* pstate = static_cast<IntrofsState*>(context->private_data);
-
+    auto* state = getFuseContextData();
     if (fi->flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC)) {
-      pstate->ofiles.emplace(path);
+      state->ofiles.emplace(path);
     } else {
-      pstate->ifiles.emplace(path);
+      state->ifiles.emplace(path);
     }
-
   } catch (...) {
     return -1;
   }
@@ -336,143 +264,115 @@ static int introfs_open(const char* path, struct fuse_file_info* fi) noexcept {
   return 0;
 }
 
-static int introfs_read(
-    const char* path, char* buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-  int res;
-
-  (void)path;
-  res = pread(fi->fh, buf, size, offset);
+static int read(
+    const char* /*path*/, char* buf, size_t size, off_t offset, struct fuse_file_info* fi) {
+  int res = ::pread(fi->fh, buf, size, offset);
   if (res == -1) res = -errno;
-
   return res;
 }
 
-static int introfs_write(
-    const char* path, const char* buf, size_t size, off_t offset, struct fuse_file_info* fi) {
-  int res;
-
-  (void)path;
-  res = pwrite(fi->fh, buf, size, offset);
+static int write(
+    const char* /*path*/, const char* buf, size_t size, off_t offset, struct fuse_file_info* fi) {
+  int res = ::pwrite(fi->fh, buf, size, offset);
   if (res == -1) res = -errno;
-
   return res;
 }
 
-static int introfs_statfs(const char* path, struct statvfs* stbuf) {
-  int res;
-
-  res = statvfs(path, stbuf);
-  if (res == -1) return -errno;
-
+static int statfs(const char* path, struct statvfs* stbuf) {
+  RETURN_ON_ERROR(::statvfs(path, stbuf));
   return 0;
 }
 
-static int introfs_flush(const char* path, struct fuse_file_info* fi) {
-  int res;
-
-  (void)path;
+static int flush(const char* /*path*/, struct fuse_file_info* fi) {
   /* This is called from every close on an open file, so call the
      close on the underlying filesystem.  But since flush may be
      called multiple times for an open file, this must not really
      close the file.  This is important if used on a network
      filesystem like NFS which flush the data/metadata on close() */
-  res = close(dup(fi->fh));
-  if (res == -1) return -errno;
-
+  RETURN_ON_ERROR(::close(dup(fi->fh)));
   return 0;
 }
 
-static int introfs_release(const char* path, struct fuse_file_info* fi) {
-  (void)path;
-  close(fi->fh);
-
+static int release(const char* /*path*/, struct fuse_file_info* fi) {
+  ::close(fi->fh);
   return 0;
 }
 
-static int introfs_fsync(const char* path, int isdatasync, struct fuse_file_info* fi) {
-  int res;
-  (void)path;
-
-  (void)isdatasync;
-  res = fsync(fi->fh);
-  if (res == -1) return -errno;
-
+static int fsync(const char* /*path*/, int /*isdatasync*/, struct fuse_file_info* fi) {
+  RETURN_ON_ERROR(::fsync(fi->fh));
   return 0;
 }
 
-static int introfs_setxattr(
-    const char* path, const char* name, const char* value, size_t size, int flags) {
-  int res = lsetxattr(path, name, value, size, flags);
-  if (res == -1) return -errno;
+static int setxattr(const char* path, const char* name, const char* value, size_t size, int flags) {
+  RETURN_ON_ERROR(::lsetxattr(path, name, value, size, flags));
   return 0;
 }
 
-static int introfs_getxattr(const char* path, const char* name, char* value, size_t size) {
-  int res = lgetxattr(path, name, value, size);
+static int getxattr(const char* path, const char* name, char* value, size_t size) {
+  int res = ::lgetxattr(path, name, value, size);
   if (res == -1) return -errno;
   return res;
 }
 
-static int introfs_listxattr(const char* path, char* list, size_t size) {
-  int res = llistxattr(path, list, size);
+static int listxattr(const char* path, char* list, size_t size) {
+  int res = ::llistxattr(path, list, size);
   if (res == -1) return -errno;
   return res;
 }
 
-static int introfs_removexattr(const char* path, const char* name) {
-  int res = lremovexattr(path, name);
-  if (res == -1) return -errno;
+static int removexattr(const char* path, const char* name) {
+  RETURN_ON_ERROR(::lremovexattr(path, name));
   return 0;
 }
 
-static int introfs_lock(const char* path, struct fuse_file_info* fi, int cmd, struct flock* lock) {
-  (void)path;
-
+static int lock(const char* /*path*/, struct fuse_file_info* fi, int cmd, struct flock* lock) {
   return ulockmgr_op(fi->fh, cmd, lock, &fi->lock_owner, sizeof(fi->lock_owner));
 }
 
-static struct _introfs_operations : public fuse_operations {
-  _introfs_operations() {
-    this->init = introfs_init;
-    this->destroy = introfs_destroy;
+}  // namespace introfs
 
-    this->getattr = introfs_getattr;
-    this->fgetattr = introfs_fgetattr;
-    this->access = introfs_access;
-    this->readlink = introfs_readlink;
-    this->opendir = introfs_opendir;
-    this->readdir = introfs_readdir;
-    this->releasedir = introfs_releasedir;
-    this->mknod = introfs_mknod;
-    this->mkdir = introfs_mkdir;
-    this->symlink = introfs_symlink;
-    this->unlink = introfs_unlink;
-    this->rmdir = introfs_rmdir;
-    this->rename = introfs_rename;
-    this->link = introfs_link;
-    this->chmod = introfs_chmod;
-    this->chown = introfs_chown;
-    this->truncate = introfs_truncate;
-    this->ftruncate = introfs_ftruncate;
-    this->utimens = introfs_utimens;
-    this->create = introfs_create;
-    this->open = introfs_open;
-    this->read = introfs_read;
-    this->write = introfs_write;
-    this->statfs = introfs_statfs;
-    this->flush = introfs_flush;
-    this->release = introfs_release;
-    this->fsync = introfs_fsync;
-    this->setxattr = introfs_setxattr;
-    this->getxattr = introfs_getxattr;
-    this->listxattr = introfs_listxattr;
-    this->removexattr = introfs_removexattr;
-    this->lock = introfs_lock;
+static struct IntroFsOperations : public fuse_operations {
+  IntroFsOperations() {
+    this->init = introfs::init;
+    this->destroy = introfs::destroy;
+
+    this->getattr = introfs::getattr;
+    this->fgetattr = introfs::fgetattr;
+    this->access = introfs::access;
+    this->readlink = introfs::readlink;
+    this->opendir = introfs::opendir;
+    this->readdir = introfs::readdir;
+    this->releasedir = introfs::releasedir;
+    this->mknod = introfs::mknod;
+    this->mkdir = introfs::mkdir;
+    this->symlink = introfs::symlink;
+    this->unlink = introfs::unlink;
+    this->rmdir = introfs::rmdir;
+    this->rename = introfs::rename;
+    this->link = introfs::link;
+    this->chmod = introfs::chmod;
+    this->chown = introfs::chown;
+    this->truncate = introfs::truncate;
+    this->ftruncate = introfs::ftruncate;
+    this->utimens = introfs::utimens;
+    this->create = introfs::create;
+    this->open = introfs::open;
+    this->read = introfs::read;
+    this->write = introfs::write;
+    this->statfs = introfs::statfs;
+    this->flush = introfs::flush;
+    this->release = introfs::release;
+    this->fsync = introfs::fsync;
+    this->setxattr = introfs::setxattr;
+    this->getxattr = introfs::getxattr;
+    this->listxattr = introfs::listxattr;
+    this->removexattr = introfs::removexattr;
+    this->lock = introfs::lock;
 
     this->flag_nullpath_ok = 0;
   }
 
-} introfs_oper;
+} introfs_ops;
 
 //
 // `fstrace` works by using FUSE (filesystem in user space) to setup a new
@@ -521,19 +421,19 @@ static struct Configuration {
 
 } config;
 
-void* fuse_ops_thread_func(void* pstate) {
+void* fuseOpsThreadFunc(void* state) {
   static char* args[] = {
       const_cast<char*>("introfs"),
       const_cast<char*>(config.mount_point),
       const_cast<char*>("-f"),
   };
 
-  fuse_main(array_size(args), args, &introfs_oper, pstate);
+  fuse_main(array_size(args), args, &introfs_ops, state);
   return nullptr;
 }
 
-void setup_fs_and_wait_for_child(const pid_t& child_pid) {
-  ensure_mount_point(config.mount_point);
+void setupFsAndWaitForChild(const pid_t& child_pid) {
+  ensureMountPoint(config.mount_point);
 
   IntrofsState state(child_pid, config.log_filepath, config.mount_point);
 
@@ -541,7 +441,7 @@ void setup_fs_and_wait_for_child(const pid_t& child_pid) {
   // spawn a thread to handle FUSE events
   //
   pthread_t fuse_ops_thread;
-  int err = pthread_create(&fuse_ops_thread, nullptr, fuse_ops_thread_func, &state);
+  int err = pthread_create(&fuse_ops_thread, nullptr, fuseOpsThreadFunc, &state);
   if (err != 0) throw SystemException("pthread_create failed", err);
 
   //
@@ -571,22 +471,22 @@ void setup_fs_and_wait_for_child(const pid_t& child_pid) {
 /*
  * No-op signal handler
  */
-void on_user_signal1(int) { return; }
+void onUserSignal2(int) { return; }
 
-void spawn_delegate_tool(const char* tool_name, char* tool_argv[]) {
+void spawnDelegateProcess(const char* tool_name, char* tool_argv[]) {
   //
   // Prepare to be woken up by the `fstrace` parent process
   // and then pause for a signal
   //
-  signal(SIGUSR2, on_user_signal1);
+  signal(SIGUSR2, onUserSignal2);
   pause();
 
   //
   // Change directory to the mirrored copy.
   // chroot to the mount point.
   //
-  const auto& curdir = get_current_dir();
-  change_dir(config.get_mirrored_path(curdir));
+  const auto& curdir = getCurrentDir();
+  changeDir(config.get_mirrored_path(curdir));
 
   // Cannot chroot!
   // if (chroot(config.mount_point)) {
@@ -618,9 +518,9 @@ int main(int argc, char* argv[]) {
 
   const pid_t child_pid = fork();
   if (child_pid > 0) {
-    setup_fs_and_wait_for_child(child_pid);
+    setupFsAndWaitForChild(child_pid);
   } else if (child_pid == 0) /* this is the child */ {
-    spawn_delegate_tool(argv[1], argv + 1);
+    spawnDelegateProcess(argv[1], argv + 1);
   } else {
     throw SystemException("fork() failed", errno);
   }
