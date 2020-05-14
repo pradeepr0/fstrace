@@ -423,6 +423,10 @@ void* fuseOpsThreadFunc(void* state) {
       const_cast<char*>("introfs"),
       const_cast<char*>(config.mount_point),
       const_cast<char*>("-f"),
+      const_cast<char*>("-o"),
+      const_cast<char*>("allow_root"),
+      const_cast<char*>("-o"),
+      const_cast<char*>("default_permissions"),
   };
 
   fuse_main(array_size(args), args, &introfs_ops, state);
