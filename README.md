@@ -1,7 +1,7 @@
 fstrace
 ========
 
-A tool for intercepting and logging files accessed by a process
+A tool for intercepting and logging files accessed by a process.
 
 `fstrace` sets up a FUSE (Filesystem in user space) mirror of the entire
 rooted filesystem at `/`. It then spawns the specified command with in the
