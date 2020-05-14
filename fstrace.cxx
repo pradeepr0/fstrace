@@ -44,10 +44,8 @@ public:
   std::set<std::string> ofiles;
 };
 
-using FuseContext = struct fuse_context;
-
 static IntrofsState* getFuseContextData() {
-  FuseContext* context = fuse_get_context();
+  struct fuse_context* context = fuse_get_context();
   if (context == nullptr) {
     fprintf(stderr, "NULL fuse context!");
     exit(-1);
@@ -71,7 +69,6 @@ static int logPrintf(const char* format, ...) noexcept {
 //
 // FUSE delegate definitions
 //
-
 namespace introfs {
 
 static void* init(struct fuse_conn_info* conn) noexcept {
@@ -381,9 +378,9 @@ static struct IntroFsOperations : public fuse_operations {
 // file opens and creates.
 //
 // When `fstrace` is invoked inside a directory `dir`, it first sets up the
-// mirroring-introspecting filesystem and then proceeds to spawn a delegate-tool
-// chrooted inside the mirrored copy of `dir`. This allows fstrace to monitor
-// the file operations performed by delegate-tool and its subprocesses.
+// mirroring-introspecting filesystem and then proceeds to spawn the
+// delegate-tool inside the mirrored copy of `dir`. This allows fstrace to
+// monitor the file operations performed by delegate-tool and its subprocesses.
 //
 // `fstrace` then waits for the spawned delegate-tool to complete and then sets up
 // a lazy unmount of the mirroring filesystem with an invocation of
@@ -411,8 +408,8 @@ static struct Configuration {
   const char* log_filepath;
 
   Configuration(
-      const char* mount_point_ = "/tmp/__introfs__",
-      const char* log_filepath_ = "/tmp/__introfs__.log")
+      const char* mount_point_ = "/home/lyft/__introfs__",
+      const char* log_filepath_ = "/home/lyft/__introfs__.log")
       : mount_point(mount_point_), log_filepath(log_filepath_) {}
 
   std::string get_mirrored_path(const std::string& path) const {
@@ -483,16 +480,9 @@ void spawnDelegateProcess(const char* tool_name, char* tool_argv[]) {
 
   //
   // Change directory to the mirrored copy.
-  // chroot to the mount point.
   //
   const auto& curdir = getCurrentDir();
   changeDir(config.get_mirrored_path(curdir));
-
-  // Cannot chroot!
-  // if (chroot(config.mount_point)) {
-  //   perror("chroot failed!");
-  //   throw SystemException("chroot failed", errno);
-  // }
 
   //
   // spawn sub process
@@ -513,8 +503,6 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "USAGE: %s <cmd> [<args>...]\n", argv[0]);
     return -1;
   }
-
-  umask(0);  // TODO: Do we need this?
 
   const pid_t child_pid = fork();
   if (child_pid > 0) {

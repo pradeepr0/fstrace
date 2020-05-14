@@ -1,9 +1,11 @@
-#ifndef __sysutil_hxx__
-#define __sysutil_hxx__
-
+#pragma once
 #include <errno.h>
 #include <stdexcept>
 #include <string>
+
+#include <pwd.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 template <class T, std::size_t N>
 constexpr std::size_t array_size(const T (&array)[N]) noexcept {
@@ -48,5 +50,3 @@ FILE* openFile(const char* filename, const char* mode) {
   if (fp == nullptr) throw SystemException(message.c_str(), errno);
   return fp;
 }
-
-#endif  // include guard
