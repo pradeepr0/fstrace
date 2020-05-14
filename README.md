@@ -3,12 +3,11 @@ fstrace
 
 A tool for intercepting and logging files accessed by a process
 
-`fstrace` sets up a FUSE (Filesystem in user space) mirror of the directory it
-is invoked in. It then spawns the specified command with in the mirrored FUSE
-filesystem. As a result, relative file paths accessed by the (sub-)command go
-through the mirrored FUSE filesystem and can thus be intercepted and logged.
-
-The intercepted file accesses are written out to `/tmp/__introfs__.log`
+`fstrace` sets up a FUSE (Filesystem in user space) mirror of the entire
+rooted filesystem at `/`. It then spawns the specified command with in the
+mirrored FUSE filesystem. As a result, relative file paths accessed by the
+(sub-)command go through the mirrored FUSE filesystem and can be
+intercepted and logged.
 
 
 Building from source
@@ -19,11 +18,11 @@ sudo apt-get install libfuse-dev
 ```
 Build from sources:
 ```sh
-cd $FSTRACE_GIT_ROOT
+# from within the cloned repository folder
 mkdir bin
 make
 ```
-You will also need to enable `root` to access user created filesystems. Edit
+You will also need to enable `root` to access user created filesystems: edit
 `/etc/fuse.conf` and uncomment the line `user_allow_other`.
 
 
@@ -95,6 +94,7 @@ should leave entries for `/etc/crontab`, `/bin/cat` etc., in the access log at
 It is possible to use *chroot* + bind mounts for sandboxing; but containerizing
 your process using docker is certainly a friendlier option.
 
+
 Troubleshooting
 ---------------
 If something goes really wrong and causes `fstrace` to hang, you can explicitly
@@ -104,3 +104,9 @@ with
 umount -lf "$HOME/__introfs__"
 ```
 
+
+Disclaimer
+----------
+I haven't tested the FUSE filesystem implementation to verify that all
+operations work as expected. At this point, this is a best effort
+implementation.
