@@ -54,9 +54,9 @@ The access log is overwritten by each new invocation of `fstrace`.
 Intercepting every file path access
 -----------------------------------
 `fstrace` intercepts relative path accesses only. This means that if your
-command accesses absolute paths (like `/tmp/data.txt`), those accesses will not
-be intercepted and logged. Often, information about the relative paths accessed
-by a process is sufficient.
+command accesses absolute paths (such as `/tmp/data.txt`), those accesses will
+not be intercepted and logged. Often, information about the relative paths
+accessed by a process is sufficient.
 
 To intercept *all* file accesses, we will need to combine FUSE based tracing
 with *chroot* style sandboxing: execute the process as if the FUSE filesystem
