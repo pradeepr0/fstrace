@@ -64,6 +64,11 @@ at `/home/lyft/__introfs__` is the root filesystem mounted on `/`. A simple
 way to do this is to containerize your process with Docker along with
 appropriate bind mounts.
 
+```diff
+- WARNING! the following command could trash your `~/.bash_history`.
+- Backup the file if necessary.
+```
+
 For example,
 ```sh
 fstrace docker run -it --rm \
