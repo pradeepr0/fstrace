@@ -65,8 +65,9 @@ way to do this is to containerize your process with Docker along with
 appropriate bind mounts.
 
 ```diff
-- WARNING! the following command could trash your `~/.bash_history`.
-- Backup the file if necessary.
+- WARNING! the following command could trash your `~/.bash_history`,
+- if you execute the docker container without a command and drop into
+- an interactive shell. Backup the file if necessary.
 ```
 
 For example,
