@@ -22,7 +22,7 @@ Build from sources:
 mkdir bin
 make
 ```
-You will also need to enable `root` to access user created filesystems: edit
+You will also need to allow `root` to access user created filesystems: edit
 `/etc/fuse.conf` and uncomment the line `user_allow_other`.
 
 
