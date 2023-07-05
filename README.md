@@ -37,8 +37,8 @@ fstrace <cmd> [<args>...]
 fstrace touch sample_file.txt
 ```
 When the command executes, the FUSE filesystem is mounted on
-`/home/lyft/__introfs__`. The file access log is written to
-`/home/lyft/__introfs__.log` when the command completes.
+`/home/user/__introfs__`. The file access log is written to
+`/home/user/__introfs__.log` when the command completes.
 
 The file access log contains two columns separated by a TAB character, as below:
 ```tsv
@@ -60,7 +60,7 @@ accessed by a process is sufficient.
 
 To intercept *all* file accesses, we will need to combine FUSE based tracing
 with *chroot* style sandboxing: execute the process as if the FUSE filesystem
-at `/home/lyft/__introfs__` is the root filesystem mounted on `/`. A simple
+at `/home/user/__introfs__` is the root filesystem mounted on `/`. A simple
 way to do this is to containerize your process with Docker along with
 appropriate bind mounts.
 
@@ -74,28 +74,28 @@ For example,
 ```sh
 fstrace docker run -it --rm \
     -u $(id -u):$(id -g) \
-    -v /home/lyft/__introfs__/bin:/bin \
-    -v /home/lyft/__introfs__/cdrom:/cdrom \
-    -v /home/lyft/__introfs__/etc:/etc \
-    -v /home/lyft/__introfs__/home:/home \
-    -v /home/lyft/__introfs__/lib:/lib \
-    -v /home/lyft/__introfs__/lib32:/lib32 \
-    -v /home/lyft/__introfs__/lib64:/lib64 \
-    -v /home/lyft/__introfs__/libx32:/libx32 \
-    -v /home/lyft/__introfs__/media:/media \
-    -v /home/lyft/__introfs__/opt:/opt \
-    -v /home/lyft/__introfs__/run:/run \
-    -v /home/lyft/__introfs__/sbin:/sbin \
-    -v /home/lyft/__introfs__/snap:/snap \
-    -v /home/lyft/__introfs__/srv:/srv \
-    -v /home/lyft/__introfs__/sys:/sys \
-    -v /home/lyft/__introfs__/usr:/usr \
-    -v /home/lyft/__introfs__/var:/var \
+    -v /home/user/__introfs__/bin:/bin \
+    -v /home/user/__introfs__/cdrom:/cdrom \
+    -v /home/user/__introfs__/etc:/etc \
+    -v /home/user/__introfs__/home:/home \
+    -v /home/user/__introfs__/lib:/lib \
+    -v /home/user/__introfs__/lib32:/lib32 \
+    -v /home/user/__introfs__/lib64:/lib64 \
+    -v /home/user/__introfs__/libx32:/libx32 \
+    -v /home/user/__introfs__/media:/media \
+    -v /home/user/__introfs__/opt:/opt \
+    -v /home/user/__introfs__/run:/run \
+    -v /home/user/__introfs__/sbin:/sbin \
+    -v /home/user/__introfs__/snap:/snap \
+    -v /home/user/__introfs__/srv:/srv \
+    -v /home/user/__introfs__/sys:/sys \
+    -v /home/user/__introfs__/usr:/usr \
+    -v /home/user/__introfs__/var:/var \
   ubuntu:16.04 \
 cat /etc/crontab
 ```
 should leave entries for `/etc/crontab`, `/bin/cat` etc., in the access log at
-`/home/lyft/__introfs__.log`.
+`/home/user/__introfs__.log`.
 
 It is possible to use *chroot* + bind mounts for sandboxing; but containerizing
 your process using docker is certainly a friendlier option.
