@@ -7,7 +7,7 @@ A tool for intercepting and logging files accessed by a process.
 rooted filesystem at `/`. It then spawns the specified command with in the
 mirrored FUSE filesystem. As a result, relative file paths accessed by the
 (sub-)command go through the mirrored FUSE filesystem and can be
-intercepted and logged.
+intercepted and the absolute path that is finally accessed can be logged.
 
 
 Building from source
